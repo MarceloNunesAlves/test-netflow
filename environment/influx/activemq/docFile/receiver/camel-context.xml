@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Configures the Camel Context-->
+
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:amq="http://activemq.apache.org/schema/core"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="
+       http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+       http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd
+       http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.0.xsd
+       http://activemq.apache.org/schema/core http://activemq.apache.org/schema/core/activemq-core.xsd">
+
+	<bean id="bridgePropertyPlaceholder" class="org.apache.camel.spring.spi.BridgePropertyPlaceholderConfigurer">
+		<property name="location" value="classpath:app.properties"/>
+	</bean>
+	
+    <!-- ======================================================================================== -->
+    <!-- ============================ PACKAGE SCAN ============================================== -->
+    <!-- ======================================================================================== -->
+	<context:component-scan base-package="br.com.flexvision.processor" />
+
+	<!-- ======================================================================================== -->
+	<!-- ====================================== OPEN MQ ========================================= -->
+	<!-- ======================================================================================== -->
+
+	<bean id="openmq" class="org.apache.camel.component.jms.JmsComponent">
+		<property name="connectionFactory" ref="mqConnectionFactory" />
+	</bean>
+
+	<bean id="mqConnectionFactory" factory-bean="customFactoryBean" factory-method="createConnectionFactory"/>
+
+	<bean id="customFactoryBean" class="br.com.flexvision.bean.OpenMQFactoryBean">
+		<property name="configuration">
+			<props>
+				<prop key="imqAddressList">send-msg-activemq:7676</prop>
+				<prop key="imqDefaultPassword">admin</prop>
+                <prop key="imqDefaultUsername">admin</prop>
+			</props>
+		</property>
+	</bean>
+	<!-- ======================================================================================== -->
+	<!-- ====================================== ACTIVE MQ  ====================================== -->
+	<!-- ======================================================================================== -->
+
+	<bean id="jmsConnectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory">
+		<property name="brokerURL" value="tcp://send-msg-activemq:61616" />
+	</bean>
+	
+	<bean id="pooledConnectionFactory" class="org.apache.activemq.pool.PooledConnectionFactory">
+  		<property name="maxConnections" value="100" />
+  		<property name="maximumActiveSessionPerConnection" value="100" />
+  		<property name="connectionFactory" ref="jmsConnectionFactory" />
+	</bean>
+	
+	<bean id="jmsConfig" class="org.apache.camel.component.jms.JmsConfiguration">
+  		<property name="connectionFactory" ref="pooledConnectionFactory"/>
+  		<property name="transacted" value="false"/>
+  		<property name="concurrentConsumers" value="1"/>
+	</bean>
+	    
+	<bean id="activemq" class="org.apache.activemq.camel.component.ActiveMQComponent">
+	   	<property name="configuration" ref="jmsConfig"/>
+	</bean>
+
+	<!-- ======================================================================================== -->
+	<!-- ======================================== ROTAS  ======================================== -->
+	<!-- ======================================================================================== -->
+
+	<camelContext id="contextCamel" streamCache="true" xmlns="http://camel.apache.org/schema/spring">
+	
+		<!-- =====================================  RRD   ===================================== -->
+		<route id="generate-file-rrd" shutdownRoute="Defer" autoStartup="{{app.function.generate.rrd}}">
+			<from uri="timer://createFileRRD?repeatCount=1&amp;delay=100"/>
+			<setHeader headerName="NODE_COUNT"><constant>{{app.function.count.node}}</constant></setHeader>
+			<setHeader headerName="NODE_INIT_ID"><constant>{{app.function.count.node.init.id}}</constant></setHeader>
+			<setHeader headerName="METRIC_COUNT"><constant>{{app.function.count.metric}}</constant></setHeader>
+			<setHeader headerName="METRIC_INIT_ID"><constant>{{app.function.count.metric.init.id}}</constant></setHeader>
+			<setHeader headerName="PATH"><constant>{{app.path.rrd}}</constant></setHeader>
+			<process ref="generateFiles"/>
+			<log message="RRD - Fim da geração de arquivos!" loggingLevel="INFO"/>
+		</route>
+		
+		<!-- ================================ SEND - MSG   ===================================== -->
+		
+	    <route id="generate-data" shutdownRoute="Defer" autoStartup="{{app.function.queue.send}}">
+			<from uri="timer://timerSendMsg?fixedRate=true&amp;period=60000"/>
+			<setHeader headerName="NODE_COUNT"><constant>{{app.function.count.node}}</constant></setHeader>
+			<setHeader headerName="NODE_INIT_ID"><constant>{{app.function.count.node.init.id}}</constant></setHeader>
+			<setHeader headerName="METRIC_COUNT"><constant>{{app.function.count.metric}}</constant></setHeader>
+			<setHeader headerName="METRIC_INIT_ID"><constant>{{app.function.count.metric.init.id}}</constant></setHeader>
+			<process ref="generateMessages"/>
+			<to uri="seda:splitMsg"/>
+	    </route>
+	    <route id="split-msg" shutdownRoute="Defer" autoStartup="{{app.function.queue.send}}">
+			<from uri="seda:splitMsg"/>
+			<split>
+				<simple>${body}</simple>
+				<to uri="seda:msgSend"/>
+			</split>
+		</route>
+		<route id="send-msg" shutdownRoute="Defer" autoStartup="{{app.function.queue.send}}">
+			<from uri="seda:msgSend"/>
+			<choice>
+	            <when>
+	            	<simple>"{{app.function.queue}}" == "activemq"</simple>
+	                <to uri="activemq:queue:loader"/>
+	            </when>
+	            <when>
+	            	<simple>"{{app.function.queue}}" == "openmq"</simple>
+	                <to uri="openmq:queue:loader"/>
+	            </when>
+	            <when>
+					<simple>"{{app.function.queue}}" == "kafka"</simple>
+	                <to uri="kafka:loader?brokers=send-msg-activemq:9092"/>
+	            </when>
+	        </choice>
+		</route>
+		
+		<!-- ===================================== RECEIVER - ACTIVEMQ ===================================================== -->
+	    <route id="receive-msg-activemq" shutdownRoute="Defer" autoStartup="{{app.function.queue.receive.activemq}}">
+			<from uri="activemq:queue:loader"/>
+			<setHeader headerName="PATH"><constant>{{app.path.rrd}}</constant></setHeader>
+			<choice>
+	            <when>
+	            	<simple>"{{app.function.queue.type}}" == "RRD"</simple>
+	                <process ref="receiveRRD"/>
+	            </when>
+	            <when>
+					<simple>"{{app.function.queue.type}}" == "InfluxDB"</simple>
+	                <process ref="receiveInflux"/>
+	            </when>
+	        </choice>
+			<log message="${body}" loggingLevel="DEBUG"/>
+	    </route>
+		<!-- ===================================== RECEIVER - OPENMQ ===================================================== -->
+	    <route id="receive-msg-openmq" shutdownRoute="Defer" autoStartup="{{app.function.queue.receive.openmq}}">
+			<from uri="openmq:queue:loader"/>
+			<setHeader headerName="PATH"><constant>{{app.path.rrd}}</constant></setHeader>
+			<choice>
+	            <when>
+	            	<simple>"{{app.function.queue.type}}" == "RRD"</simple>
+	                <process ref="receiveRRD"/>
+	            </when>
+	            <when>
+					<simple>"{{app.function.queue.type}}" == "InfluxDB"</simple>
+	                <process ref="receiveInflux"/>
+	            </when>
+	        </choice>
+			<log message="${body}" loggingLevel="DEBUG"/>
+	    </route>
+		<!-- ===================================== RECEIVER - KAFKA ========================================================= -->
+	    <route id="receive-msg-kafka" shutdownRoute="Defer" autoStartup="{{app.function.queue.receive.kafka}}">
+			<from uri="kafka:loader?brokers=send-msg-activemq:9092&amp;consumersCount={{app.function.queue.receive.consumersCount}}"/>
+			<setHeader headerName="PATH"><constant>{{app.path.rrd}}</constant></setHeader>
+			<choice>
+	            <when>
+	            	<simple>"{{app.function.queue.type}}" == "RRD"</simple>
+	                <process ref="receiveRRD"/>
+	            </when>
+	            <when>
+					<simple>"{{app.function.queue.type}}" == "InfluxDB"</simple>
+	                <process ref="receiveInflux"/>
+	            </when>
+	        </choice>
+			<log message="${body}" loggingLevel="DEBUG"/>
+	    </route>
+
+	</camelContext>
+
+</beans>

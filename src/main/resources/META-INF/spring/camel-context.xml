@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Configures the Camel Context-->
+
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:amq="http://activemq.apache.org/schema/core"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="
+       http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+       http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd
+       http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context-3.0.xsd
+       http://activemq.apache.org/schema/core http://activemq.apache.org/schema/core/activemq-core.xsd">
+
+	<context:property-placeholder location="classpath:app.properties"/>
+	
+    <!-- ======================================================================================== -->
+    <!-- ============================ PACKAGE SCAN ============================================== -->
+    <!-- ======================================================================================== -->
+	<context:component-scan base-package="br.com.flexvision.processor" />
+
+	<!-- ======================================================================================== -->
+	<!-- ======================================== ROTAS  ======================================== -->
+	<!-- ======================================================================================== -->
+
+	<camelContext id="contextCamel" streamCache="true" xmlns="http://camel.apache.org/schema/spring">
+	
+		<propertyPlaceholder id="properties" location="classpath:app.properties" />
+		
+		<!-- ================================ SEND - MSG  ====================================== -->
+		
+	    <route id="route-test" shutdownRoute="Defer" autoStartup="{{env:ROUTE_TEST}}">
+			<from uri="timer://routeTest?fixedRate=true&amp;period=10000"/>
+			<log message="Rota OK!" loggingLevel="INFO"/>
+		</route>
+
+		<!-- ================================   INSERT   ======================================= -->
+
+	    <route id="generate-data" shutdownRoute="Defer" autoStartup="{{env:GENERATE}}">
+	    	<from uri="timer://timerSendMsg?fixedRate=true&amp;period={{env:STEP}}000"/>
+	    	<setHeader headerName="COUNT_FOR_SEG"><constant>{{env:COUNT_FOR_SEG}}</constant></setHeader>
+			<process ref="generateMessage"/>
+			<to uri="seda:splitMsg"/>
+	    </route>
+	    <route id="split-msg" shutdownRoute="Defer" autoStartup="{{env:GENERATE}}">
+			<from uri="seda:splitMsg"/>
+			<split>
+				<tokenize token="\n" group="1000"/>
+				<to uri="seda:msgData"/>
+			</split>
+		</route>
+		<route id="send-msg" shutdownRoute="Defer" autoStartup="{{env:GENERATE}}">
+			<from uri="seda:msgData?concurrentConsumers={{env:CONSUMERSCOUNT}}"/>
+			<choice>
+	            <when>
+	            	<simple>"{{env:TYPE}}" == "InfluxDB"</simple>
+					<process ref="influxNative"/>
+	    			<to uri="http4://{{env:INFLUXDB}}:8086/write?db=netflow"/>
+	    			<log message="${body}" loggingLevel="DEBUG"/>
+	            </when>
+	            <when>
+	            	<simple>"{{env:TYPE}}" == "ElasticSearch"</simple>
+	                <process ref="elasticSearchNative"/>
+	                <to uri="http4://{{env:ELASTIC}}:9200/netflow/flow/_bulk"/>
+	            </when>
+	        </choice>
+		</route>
+
+	</camelContext>
+
+</beans>

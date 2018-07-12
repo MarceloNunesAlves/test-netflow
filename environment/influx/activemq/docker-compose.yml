@@ -1,0 +1,27 @@
+version: '2'
+networks:
+  local-Influx:
+    driver: bridge
+services:
+  send-msg-activemq:
+    build:
+      dockerfile: ./docFile/sendActive.dockerfile
+      context: .
+    container_name: send-activemq
+    tty: true
+    stdin_open: true
+    ports: 
+      - 8162:8161
+    networks:
+      - local-Influx
+  rec-activemq-influxdb:
+    build:
+      dockerfile: ./docFile/receiverActive.dockerfile
+      context: .
+    container_name: rec-activemq-influxdb
+    tty: true
+    stdin_open: true
+    volumes:
+      - /tmp/rrd:/tmp/rrd
+    networks:
+      - local-Influx

@@ -1,0 +1,75 @@
+version: '2'
+networks:
+  local-Influx:
+    driver: bridge
+services:
+  server-influxdb:
+    build:
+      dockerfile: ./docFile/influxdb.dockerfile
+      context: .
+    container_name: server-influxdb
+    networks:
+      - local-Influx
+  server-activemq:
+    build:
+      dockerfile: ./docFile/activemq.dockerfile
+      context: .
+    container_name: server-activemq
+    ports: 
+      - 8162:8161
+    networks:
+      - local-Influx
+  send-msg-activemq:
+    build:
+      dockerfile: ./docFile/test-mq-time-series.dockerfile
+      context: .
+    container_name: send-activemq
+    networks:
+      - local-Influx
+    depends_on: 
+      - server-influxdb
+      - server-activemq
+    environment: 
+      - GENERATE_RRD=false
+      - NAME_HOST=server-activemq
+      - QUEUE=activemq
+      - QUEUE_SEND=true
+      - QUEUE_RECEIVE_ACTIVEMQ=false
+      - QUEUE_RECEIVE_KAFKA=false
+      - QUEUE_RECEIVE_OPENMQ=false
+      - QUEUE_TYPE=InfluxDB
+      - QUEUE_RECEIVE_CONSUMERSCOUNT=100
+      - COUNT_NODE=100
+      - COUNT_NODE_INIT_ID=10000
+      - COUNT_METRIC=20
+      - COUNT_METRIC_INIT_ID=200
+      - INFLUXDB=server-influxdb
+      - ROUTE_TEST=false
+  rec-activemq:
+    build:
+      dockerfile: ./docFile/test-mq-time-series.dockerfile
+      context: .
+    container_name: rec-activemq
+    volumes:
+      - /home:/home
+    networks:
+      - local-Influx
+    depends_on: 
+      - server-influxdb
+      - server-activemq
+    environment: 
+      - GENERATE_RRD=false
+      - NAME_HOST=server-activemq
+      - QUEUE=activemq
+      - QUEUE_SEND=false
+      - QUEUE_RECEIVE_ACTIVEMQ=true
+      - QUEUE_RECEIVE_KAFKA=false
+      - QUEUE_RECEIVE_OPENMQ=false
+      - QUEUE_TYPE=InfluxDB
+      - QUEUE_RECEIVE_CONSUMERSCOUNT=100
+      - COUNT_NODE=100
+      - COUNT_NODE_INIT_ID=10000
+      - COUNT_METRIC=20
+      - COUNT_METRIC_INIT_ID=200
+      - INFLUXDB=server-influxdb
+      - ROUTE_TEST=false

@@ -1,0 +1,38 @@
+version: '2'
+networks:
+  local-RRD:
+    driver: bridge
+services:
+  create-file-rrd:
+    build:
+      dockerfile: ./docFile/rrd-file.dockerfile
+      context: .
+    container_name: create-file-rrd
+    tty: true
+    stdin_open: true
+    volumes:
+      - /tmp/rrd:/tmp/rrd
+    networks:
+      - local-RRD
+  send-msg-activemq:
+    build:
+      dockerfile: ./docFile/sendActive.dockerfile
+      context: .
+    container_name: send-msg-activemq
+    tty: true
+    stdin_open: true
+    ports: 
+      - 8161:8161
+    networks:
+      - local-RRD
+  rec-msg-activemq-rrd:
+    build:
+      dockerfile: ./docFile/receiverActive.dockerfile
+      context: .
+    container_name: rec-msg-activemq-rrd
+    tty: true
+    stdin_open: true
+    volumes:
+      - /tmp/rrd:/tmp/rrd
+    networks:
+      - local-RRD

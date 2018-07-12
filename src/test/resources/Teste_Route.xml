@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+ <!-- <route id="send-msg-kafka" shutdownRoute="Defer" autoStartup="true">
+			<from uri="timer://sendMsgKafka?fixedRate=true&amp;period=50"/>
+			<process ref="generateMessage"/>
+			<to uri="kafka:localhost:9092?topic=loader&amp;zookeeperHost=localhost&amp;zookeeperPort=2181&amp;serializerClass=kafka.serializer.StringEncoder&amp;groupId=A"/>
+			<!-- <to uri="kafka:loader?brokers=localhost:9092"/> -->
+	    <!-- </route>
+	    <route id="receive-msg-kafka" shutdownRoute="Defer" autoStartup="false">
+			<from uri="kafka:loader?brokers=localhost:9092"/>
+			<log message="${body}" loggingLevel="INFO"/>
+	    </route> -->
